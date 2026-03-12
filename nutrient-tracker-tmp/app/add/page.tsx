@@ -3,7 +3,6 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 
 interface ManualEntry {
   meal_name: string;
@@ -196,11 +195,11 @@ export default function AddMealPage() {
             {imageDataUrl ? (
               <div className="flex flex-col gap-3">
                 <div className="relative w-full overflow-hidden rounded-xl" style={{ aspectRatio: "4/3" }}>
-                  <Image
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
                     src={imageDataUrl}
                     alt="Meal photo"
-                    fill
-                    className="object-cover"
+                    className="h-full w-full object-cover"
                   />
                 </div>
                 <button
