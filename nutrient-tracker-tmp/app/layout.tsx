@@ -35,6 +35,11 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <link rel="apple-touch-icon" href="/icon-192.png" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');`,
+          }}
+        />
       </head>
       <body className={`${geistSans.variable} antialiased`}>{children}</body>
     </html>
