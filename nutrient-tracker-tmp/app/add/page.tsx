@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 
 interface ManualEntry {
   meal_name: string;
@@ -12,9 +13,16 @@ interface ManualEntry {
   estimated_fat: string;
 }
 
+type InputMode = "text" | "photo";
+
 export default function AddMealPage() {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [inputMode, setInputMode] = useState<InputMode>("text");
   const [text, setText] = useState("");
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
@@ -26,15 +34,39 @@ export default function AddMealPage() {
     estimated_fat: "",
   });
 
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setShowManual(false);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const result = ev.target?.result as string;
+      setImageDataUrl(result);
+
+      // Strip data URL prefix to get pure base64
+      const base64 = result.split(",")[1];
+      setImageBase64(base64);
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function handleEstimate() {
-    if (!text.trim()) return;
+    const hasText = text.trim().length > 0;
+    const hasImage = imageBase64 !== null;
+    if (!hasText && !hasImage) return;
+
     setError(null);
     setLoading(true);
 
     const res = await fetch("/api/estimate-macros", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({
+        text: text.trim() || null,
+        image_base64: imageBase64 ?? null,
+      }),
     });
 
     const data = await res.json();
@@ -48,7 +80,11 @@ export default function AddMealPage() {
 
     sessionStorage.setItem(
       "pendingMeal",
-      JSON.stringify({ ...data, raw_input_text: text })
+      JSON.stringify({
+        ...data,
+        raw_input_text: text.trim() || null,
+        source_type: hasImage && hasText ? "text_image" : hasImage ? "image" : "text",
+      })
     );
     router.push("/review");
   }
@@ -61,11 +97,20 @@ export default function AddMealPage() {
       estimated_carbs: parseFloat(manual.estimated_carbs) || 0,
       estimated_fat: parseFloat(manual.estimated_fat) || 0,
       ai_notes: "",
-      raw_input_text: text,
+      raw_input_text: text.trim() || null,
+      source_type: "text" as const,
     };
     sessionStorage.setItem("pendingMeal", JSON.stringify(entry));
     router.push("/review");
   }
+
+  function switchMode(mode: InputMode) {
+    setInputMode(mode);
+    setError(null);
+    setShowManual(false);
+  }
+
+  const canEstimate = !loading && (text.trim().length > 0 || imageBase64 !== null);
 
   const manualFields: { key: keyof ManualEntry; label: string; unit: string }[] = [
     { key: "estimated_calories", label: "Calories", unit: "kcal" },
@@ -77,38 +122,134 @@ export default function AddMealPage() {
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50">
       <header className="flex items-center gap-3 bg-white px-4 py-4 shadow-sm">
-        <Link href="/dashboard" className="flex min-h-[44px] min-w-[44px] items-center text-zinc-400 hover:text-zinc-600">
+        <Link
+          href="/dashboard"
+          className="flex min-h-[44px] min-w-[44px] items-center text-zinc-400 hover:text-zinc-600"
+        >
           ← Back
         </Link>
         <h1 className="text-lg font-semibold text-zinc-900">Add Meal</h1>
       </header>
 
       <main className="flex flex-1 flex-col gap-4 px-4 py-6">
-        {/* Text input */}
-        <div className="rounded-2xl bg-white p-5 shadow-sm">
-          <label className="mb-2 block text-sm font-medium text-zinc-700">
-            Describe your meal
-          </label>
-          <textarea
-            value={text}
-            onChange={(e) => { setText(e.target.value); setShowManual(false); setError(null); }}
-            rows={4}
-            placeholder="e.g. 2 eggs, toast with peanut butter and a glass of milk"
-            className="w-full resize-none rounded-lg border border-zinc-300 px-3.5 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
-          />
-          <p className="mt-2 text-xs text-zinc-400">
-            Be as specific as you can — portions, cooking method, sauces, etc.
-          </p>
+        {/* Mode toggle */}
+        <div className="flex rounded-xl bg-zinc-100 p-1">
+          <button
+            type="button"
+            onClick={() => switchMode("text")}
+            className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+              inputMode === "text"
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-700"
+            }`}
+          >
+            Describe
+          </button>
+          <button
+            type="button"
+            onClick={() => switchMode("photo")}
+            className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+              inputMode === "photo"
+                ? "bg-white text-zinc-900 shadow-sm"
+                : "text-zinc-500 hover:text-zinc-700"
+            }`}
+          >
+            Photo
+          </button>
         </div>
 
-        {/* Error + manual fallback trigger */}
+        {/* Text input */}
+        {inputMode === "text" && (
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <label className="mb-2 block text-sm font-medium text-zinc-700">
+              Describe your meal
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                setShowManual(false);
+                setError(null);
+              }}
+              rows={4}
+              placeholder="e.g. 2 eggs, toast with peanut butter and a glass of milk"
+              className="w-full resize-none rounded-lg border border-zinc-300 px-3.5 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+            />
+            <p className="mt-2 text-xs text-zinc-400">
+              Be as specific as you can — portions, cooking method, sauces, etc.
+            </p>
+          </div>
+        )}
+
+        {/* Photo input */}
+        {inputMode === "photo" && (
+          <div className="rounded-2xl bg-white p-5 shadow-sm">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhotoChange}
+              className="hidden"
+            />
+
+            {imageDataUrl ? (
+              <div className="flex flex-col gap-3">
+                <div className="relative w-full overflow-hidden rounded-xl" style={{ aspectRatio: "4/3" }}>
+                  <Image
+                    src={imageDataUrl}
+                    alt="Meal photo"
+                    fill
+                    className="object-cover"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageDataUrl(null);
+                    setImageBase64(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                  className="text-sm text-zinc-400 hover:text-zinc-600"
+                >
+                  Remove photo
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-zinc-200 py-12 text-zinc-400 hover:border-zinc-300 hover:text-zinc-500 transition-colors"
+              >
+                <span className="text-3xl">📷</span>
+                <span className="text-sm font-medium">Take a photo or choose from library</span>
+              </button>
+            )}
+
+            {/* Optional text annotation with photo */}
+            {imageDataUrl && (
+              <div className="mt-4">
+                <label className="mb-1.5 block text-sm font-medium text-zinc-700">
+                  Add details (optional)
+                </label>
+                <input
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="e.g. large portion, extra sauce"
+                  className="w-full rounded-lg border border-zinc-300 px-3.5 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-zinc-500 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Error + manual fallback */}
         {error && !showManual && (
           <p className="rounded-lg bg-red-50 px-3.5 py-2.5 text-sm text-red-600">
             {error}
           </p>
         )}
 
-        {/* Manual entry form */}
         {showManual && (
           <div className="rounded-2xl bg-white p-5 shadow-sm">
             <p className="mb-4 text-sm font-medium text-zinc-500">
@@ -128,9 +269,7 @@ export default function AddMealPage() {
               </div>
               {manualFields.map(({ key, label, unit }) => (
                 <div key={key} className="flex items-center gap-4">
-                  <label className="w-20 text-sm font-medium text-zinc-700">
-                    {label}
-                  </label>
+                  <label className="w-20 text-sm font-medium text-zinc-700">{label}</label>
                   <div className="flex flex-1 items-center gap-2">
                     <input
                       type="number"
@@ -153,7 +292,7 @@ export default function AddMealPage() {
         {!showManual ? (
           <button
             onClick={handleEstimate}
-            disabled={!text.trim() || loading}
+            disabled={!canEstimate}
             className="w-full max-w-sm rounded-full bg-zinc-900 py-3.5 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-zinc-700 disabled:opacity-40 active:scale-95"
           >
             {loading ? "Estimating…" : "Estimate Macros"}
@@ -168,7 +307,7 @@ export default function AddMealPage() {
             </button>
             <button
               onClick={handleEstimate}
-              disabled={!text.trim() || loading}
+              disabled={!canEstimate}
               className="text-sm text-zinc-400 hover:text-zinc-600 disabled:opacity-40"
             >
               {loading ? "Estimating…" : "Try AI again"}

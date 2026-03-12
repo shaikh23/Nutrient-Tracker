@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const client = new Anthropic();
 
-const SYSTEM_PROMPT = `You are a nutrition assistant. The user will describe a meal in text.
+const SYSTEM_PROMPT = `You are a nutrition assistant. The user will describe a meal in text, share a photo, or both.
 
 Return a JSON object with exactly these fields:
 - meal_name: string, a short readable name for the meal
@@ -21,32 +21,55 @@ Rules:
 - Return only valid JSON. No extra text, no markdown code fences.`;
 
 export async function POST(request: Request) {
-  // Require auth
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const body = await request.json();
   const text = (body.text ?? "").trim();
+  const imageBase64: string | null = body.image_base64 ?? null;
 
-  if (!text) {
+  if (!text && !imageBase64) {
     return NextResponse.json(
-      { error: "Please describe your meal." },
+      { error: "Please describe your meal or provide a photo." },
       { status: 400 }
     );
   }
+
+  // Build message content — text, image, or both
+  type ContentBlock =
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "base64"; media_type: "image/jpeg" | "image/png" | "image/webp"; data: string } };
+
+  const content: ContentBlock[] = [];
+
+  if (imageBase64) {
+    content.push({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/jpeg",
+        data: imageBase64,
+      },
+    });
+  }
+
+  const userText = text || "Please estimate the macros for the food shown in the photo.";
+  content.push({ type: "text", text: userText });
 
   const message = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 512,
     system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: text }],
+    messages: [{ role: "user", content }],
   });
 
   const rawText = (message.content[0] as { type: string; text: string }).text;
-  // Strip markdown code fences if present (e.g. ```json ... ```)
+  // Strip markdown code fences if present
   const raw = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
 
   let parsed: {
